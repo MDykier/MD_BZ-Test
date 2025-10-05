@@ -1,0 +1,33 @@
+Create an n8n export JSON named /n8n/drive_indexer.workflow.json that implements a "Drive Indexer" flow using Google OAuth (no service account).
+
+Nodes:
+- Triggers: Manual Trigger AND Cron (2:00 AM, TZ from env TIMEZONE)
+- Google Drive (OAuth): List
+  - Folder ID = {{$env.GOOGLE_DRIVE_MASTER_FOLDER_ID}}
+  - Recurse subfolders = true
+  - File types = CSV + XLSX
+  - Fields: id,name,mimeType,parents,modifiedTime,webViewLink
+- Split In Batches (10–20)
+- For each file:
+  - If XLSX, iterate sheet names; if CSV, treat as one sheet
+  - Google Drive (OAuth): Download enough to read headers + ~2000 rows
+  - Function node (“CSV/XLSX Profiler”):
+      infer columns, measures, date fields, grain, month/year (from filename and/or date column), rowCount, and build a ≤600 char “profileText”
+      output metadata object for this sheet
+  - HTTP Request: OpenAI embeddings
+      POST https://api.openai.com/v1/embeddings
+      headers: Authorization: Bearer {{$env.OPENAI_API_KEY}}, Content-Type: application/json
+      body: {"model":"{{$env.OPENAI_EMBED_MODEL}}","input":"{{ $json.profileText }}"}
+  - HTTP Request: Qdrant upsert into collection toast_sheets_v1 (cosine)
+      Only upsert if modifiedTime changed since last run (compare vs n8n Data Store)
+      Store: {fileId,name,sheetName,path,webViewLink,modifiedTime,year,month,grain,columns,measures,rowCount,profileText}
+  - n8n Data Store: upsert manifest (key=fileId|sheetName, value=metadata)
+
+- Google Sheets (OAuth): Append to {{$env.GOOGLE_SHEET_RUNLOG_ID}} tab “RunLog”
+  columns: Timestamp_PDT, FilesProcessed, SheetsEmbedded, SheetsSkipped, MsElapsed
+
+Constraints:
+- Use OAuth credentials for Drive/Sheets.
+- Use HTTP nodes for OpenAI/Qdrant (no n8n OpenAI node).
+- No credentials inlined; reference env vars.
+Return ONLY the JSON.
