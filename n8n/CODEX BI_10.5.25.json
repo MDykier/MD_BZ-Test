@@ -1,0 +1,589 @@
+{
+  "name": "CODEX BI_10.5.25",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "7e7e9fef-16d4-4088-bbf0-86d0b094e7da",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "ab5eca52-8c3d-4755-ae4c-37733e71bd33",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = getWorkflowStaticData('global');\ndata.startTime = Date.now();\ndata.processed = 0;\ndata.embedded = 0;\ndata.skipped = 0;\nreturn items;"
+      },
+      "id": "4819b2f6-8926-4283-b0f1-6c5c09b89e4e",
+      "name": "Init Stats",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        480,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "7e2e24c3-79c5-43b2-94f3-4834fa05e6d9",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        720,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{$json.id}}",
+        "options": {}
+      },
+      "id": "0990e48b-9078-4adb-806e-23dfa790d717",
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 2,
+      "position": [
+        832,
+        80
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GpsJyexT8AVD5VbW",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// BEGIN FUNCTION CODE\nconst file = $item(0).$node[\"Search files and folders\"].json; // ✅ grab the Drive file metadata that pairs with this item\nconst rows = items.map(i => i.json);          // from Spreadsheet File (first sheet or CSV)\nconst headers = rows.length ? Object.keys(rows[0]) : [];\nconst headerLC = headers.map(h => String(h).toLowerCase());\n\n// Detect measures/dimensions by name\nconst has = (name) => headerLC.includes(name.toLowerCase());\nconst measures = [];\nconst mCands = [\"Net Sales\",\"Net Amount\",\"Gross Sales\",\"Quantity\",\"Tips\",\"Discount Amount\",\"Tax\",\"Guests\"];\nfor (const m of mCands) {\n  if (has(m)) measures.push(m);\n}\n\n// Guess month/year from filename\nfunction guessMonthYear(name) {\n  const txt = name.toLowerCase();\n  const months = [\"january\",\"february\",\"march\",\"april\",\"may\",\"june\",\"july\",\"august\",\"september\",\"october\",\"november\",\"december\",\"jan\",\"feb\",\"mar\",\"apr\",\"may\",\"jun\",\"jul\",\"aug\",\"sep\",\"sept\",\"oct\",\"nov\",\"dec\"];\n  let month = null, year = null;\n  // try YYYY-MM or YYYY_MM\n  const m1 = txt.match(/(20\\d{2})[-_](\\d{1,2})/);\n  if (m1) { year = Number(m1[1]); month = Number(m1[2]); }\n  // try “May 2024”\n  if (!year) {\n    const m2 = txt.match(/(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\s*(20\\d{2})/);\n    if (m2) {\n      const mstr = m2[1];\n      year = Number(m2[2]);\n      month = months.findIndex(x => x.startsWith(mstr)) % 12 + 1;\n    }\n  }\n  return { month, year };\n}\n\nconst { month, year } = guessMonthYear(file.name);\n\n// Grain guess\nlet grain = 'line_item';\nif (has('date') && !has('item') && (has('category') || has('payment type'))) grain = 'daily';\n\nconst rowCount = rows.length;\n\n// Profile text (≤600 chars)\nconst sampleHeaders = headers.slice(0,12).join(', ');\nconst measuresTxt = measures.join(', ') || 'none detected';\nconst prof = [\n  `File: ${file.name}`,\n  `Path: ${file.path || ''}`,\n  `Month: ${month || 'unknown'} Year: ${year || 'unknown'} Grain: ${grain}`,\n  `Headers: ${sampleHeaders}`,\n  `Measures: ${measuresTxt}`,\n  `Rows(sampled): ${rowCount}`\n].join(' | ');\nconst profileText = prof.slice(0, 600);\n\nreturn [\n  {\n    json: {\n      fileId: file.id || file.fileId || file.googleFileId,\n      name: file.name,\n      path: file.path || '',\n      webViewLink: file.webViewLink,\n      modifiedTime: file.modifiedTime,\n      year, month, grain,\n      columns: headers,\n      measures,\n      rowCount,\n      profileText\n    }\n  }\n];\n// END FUNCTION CODE"
+      },
+      "id": "bbdaf84e-d96e-4d30-8b03-63873db00128",
+      "name": "CSV/XLSX Profiler",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/embeddings",
+        "jsonParameters": true,
+        "options": {},
+        "headerParametersJson": "={{ { \"Authorization\": \"Bearer \" + $env.OPENAI_API_KEY, \"Content-Type\": \"application/json\" } }}"
+      },
+      "id": "7b0267d5-8847-4f40-a614-900d9637b2ce",
+      "name": "OpenAI Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        80
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "functionCode": "const metadata = $item(0).$node[\"CSV/XLSX Profiler\"].json;\nconst embedding = $json.data?.[0]?.embedding || [];\nreturn [{ json: { ...metadata, embedding } }];"
+      },
+      "id": "ddf2d72a-f423-4348-8815-2b2f5fc49d5a",
+      "name": "Prepare Qdrant Payload",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.QDRANT_URL}}/collections/toast_sheets_v1/points?wait=true",
+        "jsonParameters": true,
+        "options": {}
+      },
+      "id": "37b14334-3d16-4fec-bdd8-ac874221bf40",
+      "name": "Qdrant Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        80
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = getWorkflowStaticData('global');\ndata.processed = (data.processed || 0) + 1;\ndata.embedded = (data.embedded || 0) + 1;\nreturn items;"
+      },
+      "id": "4e469b3e-7ae0-4ace-9b4c-ed06310aab66",
+      "name": "Update Stats",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items;"
+      },
+      "id": "6a24ea8f-53c2-4b62-a65d-0582356ba731",
+      "name": "Continue Loop",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = getWorkflowStaticData('global');\nconst now = new Date();\nconst timestamp = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });\nconst msElapsed = data.startTime ? (Date.now() - data.startTime) : 0;\nreturn [{ json: { Timestamp_PDT: timestamp, FilesProcessed: data.processed || 0, SheetsEmbedded: data.embedded || 0, SheetsSkipped: data.skipped || 0, MsElapsed: msElapsed } }];"
+      },
+      "id": "b441a919-f891-4000-8773-1ec584fef015",
+      "name": "Finalize Stats",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        960,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1FtP7pQjKTQ3dZVAmXIe2fEv4V8bl0An_ldPBdYqBZjo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "RunLog",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1FtP7pQjKTQ3dZVAmXIe2fEv4V8bl0An_ldPBdYqBZjo/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp_PDT": "={{ $json.Timestamp_PDT }}",
+            "Notes": "={{$json.Notes}}\n",
+            "FilesProcessed": "={{ $json.FilesProcessed }}",
+            "SheetsEmbedded": "={{ $json.SheetsEmbedded }}",
+            "SheetsSkipped": "={{ $json.SheetsSkipped }}",
+            "MsElapsed": "={{ $json.MsElapsed }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp_PDT",
+              "displayName": "Timestamp_PDT",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "FilesProcessed",
+              "displayName": "FilesProcessed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SheetsEmbedded",
+              "displayName": "SheetsEmbedded",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SheetsSkipped",
+              "displayName": "SheetsSkipped",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MsElapsed",
+              "displayName": "MsElapsed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "displayName": "Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d433f6cd-325e-4cf4-978d-adecfe740571",
+      "name": "Append RunLog",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1200,
+        368
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CPFZlznGxE8u2eHh",
+          "name": "Black Canyon Auto Storage Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.name }}",
+                    "rightValue": "csv",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "a13ea719-3ee7-4133-9fa7-e80c8db9f418"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CSV"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c7aecced-5bef-42a8-a4cd-81e8e703f0d2",
+                    "leftValue": "={{ $json.name }}",
+                    "rightValue": "xlsx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "XLSX"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1104,
+        -160
+      ],
+      "id": "773bb7a5-5d62-42c4-af99-921454b60e04",
+      "name": "Pick Parser Switch"
+    },
+    {
+      "parameters": {
+        "options": {
+          "headerRow": true
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        -240
+      ],
+      "id": "7ec727d5-c92d-4545-b07b-03b9ac4b8aa2",
+      "name": "CSV_Extract from File"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "headerRow": true,
+          "range": "A1:Z2000"
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        -64
+      ],
+      "id": "249d468b-658e-4ac1-8717-aa8412bb84de",
+      "name": "XLSX_Extract from File"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "'1EEUvpxOcVIfAFUahnrsWLSFb6Qdws6hv' in parents and (mimeType = 'text/csv' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed = false",
+        "limit": 1000,
+        "filter": {},
+        "options": {
+          "fields": [
+            "id",
+            "name",
+            "mimeType",
+            "webViewLink"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        272,
+        -32
+      ],
+      "id": "cb90f0d9-e6cc-4eb9-94f9-5b8b464393d6",
+      "name": "Search files and folders",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GpsJyexT8AVD5VbW",
+          "name": "Google Drive account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Search files and folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Stats": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Finalize Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CSV/XLSX Profiler": {
+      "main": [
+        [
+          {
+            "node": "Update Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Prepare Qdrant Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Qdrant Payload": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Stats": {
+      "main": [
+        [
+          {
+            "node": "Continue Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue Loop": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Stats": {
+      "main": [
+        [
+          {
+            "node": "Append RunLog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Pick Parser Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Parser Switch": {
+      "main": [
+        [
+          {
+            "node": "CSV_Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "XLSX_Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CSV_Extract from File": {
+      "main": [
+        [
+          {
+            "node": "CSV/XLSX Profiler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "XLSX_Extract from File": {
+      "main": [
+        [
+          {
+            "node": "CSV/XLSX Profiler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Upsert": {
+      "main": [
+        []
+      ]
+    },
+    "Search files and folders": {
+      "main": [
+        [
+          {
+            "node": "Init Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b9b6ffd2-3cea-4d25-a51b-e19420e13ae3",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f345fe567957eafb46b5b5eb254d62b9df69d5626369b676f6a7ad110a0079d5"
+  },
+  "id": "A3Rgz8FWOCTz1LCD",
+  "tags": []
+}
